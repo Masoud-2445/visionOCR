@@ -1,20 +1,24 @@
 import numpy as np
 import cv2
-from preprocessing import convert_to_grayscale
+
 
 
 def resize_image(image: np.ndarray, target_size: tuple, aspect_ratio= True, method= cv2.INTER_LINEAR) -> np.ndarray | None :
     """
-    Resizes an image to the target size, preserving aspect ratio if specified.
+    Resize an image to the given target size, optionally preserving the aspect ratio.
 
     Args:
-        image (np.ndarray): Input image in numpy array format.
-        target_size (tuple): Desired width and height (w, h).
-        aspect_ratio (bool): Whether to preserve the aspect ratio.
-        method (int): Interpolation method for resizing (default: cv2.INTER_LINEAR).
+        image (np.ndarray): The input image as a NumPy array.
+        target_size (tuple): Target dimensions as (width, height). Must contain two positive integers.
+        aspect_ratio (bool, optional): Whether to preserve the original aspect ratio. Defaults to True.
+        method (int, optional): Interpolation method to use (e.g., cv2.INTER_LINEAR). Defaults to cv2.INTER_LINEAR.
 
     Returns:
-        np.ndarray: Resized image.
+        np.ndarray | None: The resized image as a NumPy array, or None if an error occurs.
+
+    Raises:
+        TypeError: If the input image is not a NumPy array.
+        Prints error messages for invalid input or resizing failure.
     """
     try :
         if not isinstance(image, np.ndarray) :
@@ -42,160 +46,102 @@ def resize_image(image: np.ndarray, target_size: tuple, aspect_ratio= True, meth
         return None
 
 
-def deskew_image(image: np.ndarray) -> np.ndarray | None :
-    """
-    Corrects the skew of the input image using its rotation angle.
 
-    This function calculates the image's skew angle using its binary mask and
-    applies rotation to deskew the image.
+def deskew(image, delta=1, limit=5):
+    """
+    Corrects the skew of an image using the Hough Line Transform to detect lines and rotate accordingly.
 
     Args:
-        image (np.ndarray): The input image (binary or grayscale).
+        image (np.ndarray): The input image (grayscale or BGR).
+        delta (int, optional): Not used directly, reserved for future adjustments. Defaults to 1.
+        limit (int, optional): Angle threshold to filter out extreme skew angles. Defaults to 5.
 
     Returns:
         np.ndarray: The deskewed image.
-        None: If the deskewing process fails or if the input is invalid.
-
-    Raises:
-        TypeError: If the input is not a valid NumPy array.
-        Exception: For unexpected runtime errors.
     """
     try:
-        if not isinstance(image, np.ndarray) :
-            raise TypeError("Error : image must be an numpy array.")
-
-        if len(image.shape) == 3 :
-            image_gray = convert_to_grayscale(image)
-        elif len(image.shape) == 2 :
-            image_gray = image
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
-            raise TypeError("Error : image must be an numpy array(unsupported format).")
-        image_binary = cv2.threshold(image_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+            gray = image.copy()
 
-        coords = np.column_stack(np.where(image_binary > 0))
-        angle = cv2.minAreaRect(coords)[-1]
+        if np.max(gray) > 1:
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        else:
+            thresh = gray
 
-        if angle < -45:
-            angle += 90
+        lines = cv2.HoughLinesP(thresh, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10)
 
-        (h, w) = image.shape[:2]
-        center = (w // 2, h // 2)
-        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        deskewed = cv2.warpAffine(image, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-        return deskewed
+        if lines is None:
+            return image
 
-    except Exception as e:
-        print("Error: Unable to deskew image.")
-        print(f"Error: {e}")
-        return None
+        angles = []
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            if x2 - x1 == 0:
+                continue
+            angle = np.arctan((y2 - y1) / (x2 - x1)) * 180 / np.pi
 
+            if abs(angle) < limit:
+                angles.append(angle)
 
-def rotate_image(image: np.ndarray, angle: float) -> np.ndarray | None:
-    """
-    Rotates the input image by a specified angle.
+        if not angles:
+            return image
 
-    Args:
-        image (np.ndarray): The input image as a NumPy array.
-        angle (float): The rotation angle in degrees (positive for counter-clockwise).
-
-    Returns:
-        np.ndarray: The rotated image.
-        None: If rotation fails or if the input is invalid.
-
-    Raises:
-        TypeError: If the input is not a valid NumPy array.
-        ValueError: If the angle is not a valid float or integer.
-        Exception: For unexpected runtime errors.
-    """
-    try:
-        if not isinstance(image, np.ndarray):
-            raise TypeError("Image must be a NumPy array.")
-        if not isinstance(angle, (int, float)):
-            raise ValueError("Angle must be a float or integer.")
+        median_angle = np.median(angles)
 
         (h, w) = image.shape[:2]
         center = (w // 2, h // 2)
-        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated = cv2.warpAffine(image, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
+        rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         return rotated
 
     except Exception as e:
-        print(f"Error in rotating the image: {e}")
-        return None
+        print("Error during deskewing:")
+        print(f"Exception: {e}")
+        return image
 
-def prespective_transformation(image: np.ndarray, contour: np.ndarray, output_size= (2480, 3508), to_a4 = True) -> np.ndarray | None :
+
+
+
+
+def warp_perspective(image, corners):
     """
-    Applies a perspective transformation to the detected contour in the input image.
-
-    This function warps the detected paper contour into a flat, rectangular perspective.
-    If `to_a4` is set to `True`, the output size is fixed to A4 dimensions (2480x3508 pixels).
-    Otherwise, the function dynamically calculates the output size while maintaining
-    the detected contour's aspect ratio.
-
-    Steps:
-        1. Verify that the contour has exactly 4 points.
-        2. Sort the contour points in the correct order (top-left, top-right, bottom-right, bottom-left).
-        3. Calculate the target size:
-            - If `to_a4` is `True`, use the specified `output_size` (default: A4).
-            - If `to_a4` is `False`, calculate the width and height dynamically.
-        4. Compute the perspective transform matrix and apply the warp.
+    Applies a perspective transformation to the input image using the provided corner points.
 
     Args:
-        image (np.ndarray): The original image containing the detected paper.
-        contour (np.ndarray): The detected paper contour with 4 corner points.
-        output_size (tuple, optional): The target output size (width, height).
-            Default is (2480, 3508) for A4 size.
-        to_a4 (bool, optional): If `True`, fixes the output to A4 size. If `False`,
-            calculates the size dynamically based on the detected contour's dimensions.
+        image (np.ndarray): Input image to be transformed.
+        corners (np.ndarray): Array of four corner points (shape: (4, 2)) defining the source quadrilateral.
 
     Returns:
-        np.ndarray: The warped image with the applied perspective transformation.
-        None: If the transformation fails or if an invalid input is provided.
-
-    Raises:
-        ValueError: If the contour does not have exactly 4 points.
-        TypeError: If the input image or contour is not a valid NumPy array.
-        Exception: For unexpected runtime errors during the transformation.
+        np.ndarray: The warped image after applying the perspective transform.
     """
-    try :
-        if contour.shape[0] != 4 :
-            raise ValueError("Error : contour must be an array with 4 values")
-        def sort_points(pts):
-            pts = pts.reshape((4, 2))
-            # Sort by x-coordinates
-            x_sorted = sorted(pts, key=lambda x: x[0])
-            # Top-left and bottom-left
-            left = sorted(x_sorted[:2], key=lambda x: x[1])
-            # Top-right and bottom-right
-            right = sorted(x_sorted[2:], key=lambda x: x[1])
-            return np.array([left[0], right[0], right[1], left[1]], dtype="float32")
+    try:
+        corners = corners.astype(np.float32)
+        
+        width_a = np.sqrt(((corners[1][0] - corners[0][0]) ** 2) + ((corners[1][1] - corners[0][1]) ** 2))
+        width_b = np.sqrt(((corners[2][0] - corners[3][0]) ** 2) + ((corners[2][1] - corners[3][1]) ** 2))
+        max_width = max(int(width_a), int(width_b))
+        
+        height_a = np.sqrt(((corners[3][0] - corners[0][0]) ** 2) + ((corners[3][1] - corners[0][1]) ** 2))
+        height_b = np.sqrt(((corners[2][0] - corners[1][0]) ** 2) + ((corners[2][1] - corners[1][1]) ** 2))
+        max_height = max(int(height_a), int(height_b))
 
-        sorted_points = sort_points(contour)
+        max_width = max(max_width, 1)
+        max_height = max(max_height, 1)
 
-        if to_a4 :
-            max_width, max_height = output_size
-        else:
-
-            width_top = np.linalg.norm(sorted_points[0] - sorted_points[1])
-            width_bottom = np.linalg.norm(sorted_points[3] - sorted_points[2])
-            height_left = np.linalg.norm(sorted_points[0] - sorted_points[3])
-            height_right = np.linalg.norm(sorted_points[1] - sorted_points[2])
-
-            max_width = int(max(width_top, width_bottom))
-            max_height = int(max(height_left, height_right))
-
-        width, height = max_width, max_height
-        dst_points = np.array([
+        dst = np.array([
             [0, 0],
-            [width - 1, 0],
-            [width - 1, height - 1],
-            [0, height - 1]
-        ], dtype="float32")
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1]
+        ], dtype=np.float32)
 
-        matrix = cv2.getPerspectiveTransform(sorted_points, dst_points)
-        warped_image = cv2.warpPerspective(image, matrix, (width, height))
-        return warped_image
+        M = cv2.getPerspectiveTransform(corners, dst)
+        warped = cv2.warpPerspective(image, M, (max_width, max_height))
+        return warped
 
     except Exception as e:
-        print(f"Error in applying perspective transform: {e}")
-        return None
+        print("Error during perspective warp:")
+        print(f"Exception: {e}")
+        return image
