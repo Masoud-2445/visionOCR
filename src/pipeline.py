@@ -1,73 +1,83 @@
 import cv2
 import numpy as np
-import pytesseract
-from src.preprocessing import preprocess_ocr
-from src.transform import (
-    prespective_transformation,
-    deskew_image,
-    rotate_image
-)
-from src.detection import  paper_contour_detection
-from src.utils import load_image
+import utils
+import detection
+import proccess
+import transform
+from ocr_engine import OCREngine
+import cv2
+import numpy as np
+from export import overlay_ocr_to_pdf, export_ocr_to_word
 
-
-def ocr_pipeline(image_path: str, rotate_angle: float = 0) -> str | None:
-    """
-    Processes an input image and extracts text using the complete OCR pipeline.
-
-    Steps:
-        1. Load the image.
-        2. Preprocess the image (grayscale, threshold, denoise).
-        3. Detect the paper contour.
-        4. Apply perspective transformation.
-        5. Deskew the image (auto-alignment).
-        6. Apply manual rotation if specified.
-        7. Extract text using Tesseract OCR.
-
-    Args:
-        image_path (str): Path to the input image file.
-        rotate_angle (float, optional): Manual rotation angle in degrees (default: 0).
-
-    Returns:
-        str: Extracted text from the image.
-        None: If any processing step fails or an error occurs.
-    """
+def upload_image() -> np.ndarray | None:
     try:
-        # Step 1: Load the image
-        image = load_image(image_path)
-        if image is None:
-            raise ValueError("Image loading failed.")
-
-        # Step 2: Preprocess the image for OCR
-        preprocessed = preprocess_ocr(image)
-        if preprocessed is None:
-            raise ValueError("Preprocessing failed.")
-
-        # Step 3: Detect the paper contour
-        paper_contour = paper_contour_detection(preprocessed)
-        if paper_contour is None:
-            raise ValueError("Paper detection failed.")
-
-        # Step 4: Apply perspective transformation
-        warped = prespective_transformation(image, paper_contour)
-        if warped is None:
-            raise ValueError("Perspective transformation failed.")
-
-        # Step 5: Deskew the image
-        deskewed = deskew_image(warped)
-        if deskewed is None:
-            raise ValueError("Deskewing failed.")
-
-        # Step 6: Apply manual rotation (if needed)
-        if rotate_angle != 0:
-            rotated = rotate_image(deskewed, rotate_angle)
-        else:
-            rotated = deskewed
-
-        # Step 7: Extract text using Tesseract OCR
-        extracted_text = pytesseract.image_to_string(rotated, lang='eng')
-        return extracted_text.strip()
-
+        img_path = utils.select_image_path()
+        img = utils.load_image(img_path)
+        c_point, c_img = detection.detect_document_contour(img)
+        warped = transform.warp_perspective(img, c_point)
+        deskew_img = transform.deskew(warped)
+        return deskew_img
     except Exception as e:
-        print(f"Error in OCR pipeline: {e}")
+        print(f"Error while uploading image : {e}")
         return None
+    
+
+def enhance_img(image: np.ndarray) -> np.ndarray | None:
+    try:
+        if len(image.shape) ==3:
+            gray_img = proccess.convert_to_grayscale(image)
+        else :
+            gray_img = image.copy()
+
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray_img)
+        enhanced = cv2.fastNlMeansDenoising(enhanced, None, 10, 7, 21)
+        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        enhanced = cv2.filter2D(enhanced, -1, kernel)
+        threshold_img = proccess.apply_threshold(enhanced)
+        return threshold_img
+    except Exception as e:
+        print(f"Error in enhancing image : {e}")
+        return None
+        
+
+def preform_ocr(image: np.ndarray):
+    try:
+        img_enhanced = enhance_img(image)
+        ocr = OCREngine(language='eng+fas')
+        results = ocr.extract_text(img_enhanced)
+        annotated_img = ocr.draw_text_boxes(image, results)
+        utils.show_image(annotated_img)
+        return results
+    except Exception as e:
+        print(f"Error in performing ocr on image : {e}")
+        return None
+    
+
+def export_ready_data(results: dict, image: np.ndarray):
+    ocr = OCREngine('eng+fas')
+    height, width, _ = image.shape
+    image_shape = (height, width)
+    ocr_ready_data = ocr.prepare_for_export(results, image_shape)
+    return ocr_ready_data
+
+
+def export_pdf(data, image, output_path: str): 
+    try:
+        overlay_ocr_to_pdf(image, data, output_path)
+    except Exception as e : 
+        print(f"Error in exporting PDF : {e}")
+
+
+def export_word(data,output_path: str):
+    try:
+        export_ocr_to_word(data, output_path)
+    except Exception as e:
+        print(f"Error in exporting Word : {e}")
+
+
+if __name__ == "__main__" :
+    img_holder = upload_image()
+    utils.show_image(img_holder)
+    result = preform_ocr(img_holder)
+    ready_data = export_ready_data(result, img_holder)
