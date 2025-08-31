@@ -100,14 +100,17 @@ def overlay_ocr_to_pdf(image_np, export_data, output_pdf_path):
             
     return output_pdf_path
 
-def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bool = False) -> None:
-    """
-    Exports OCR result data into a Microsoft Word (.docx) document.
 
+def export_ocr_to_word(export_data: Dict, output_docx_path: str, 
+                                       font_scale_factor: float = 1.3, rtl_support: bool = False) -> None:
+    """
+    Exports OCR result with PDF-like spacing control.
+    
     Args:
-        export_data (Dict): A dictionary containing OCR result data with line and word bounding boxes.
+        export_data (Dict): A dictionary containing OCR result data.
         output_docx_path (str): Path to save the generated .docx file.
-        rtl_support (bool): Whether to apply right-to-left formatting (e.g., for Persian/Arabic text).
+        font_scale_factor (float): Multiplier for base font size (1.3 = 30% larger).
+        rtl_support (bool): Whether to apply right-to-left formatting.
     """
     try:
         doc = Document()
@@ -119,12 +122,13 @@ def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bo
             section.left_margin = Inches(0.5)
             section.right_margin = Inches(0.5)
 
-        avg_font_size = 11
-        print(f"Using consistent font size: {avg_font_size}pt")
+        # Scale the base font size
+        scaled_font_size = int(11 * font_scale_factor)
+        print(f"Using scaled font size: {scaled_font_size}pt")
 
         lines = export_data.get("lines", [])
 
-        # Sort lines by top bounding box coordinate if available
+        # Sort lines by top bounding box coordinate
         if lines:
             lines_with_top = []
             for line in lines:
@@ -132,13 +136,13 @@ def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bo
                     top_pos = line["items"][0]["bbox"][1]
                     lines_with_top.append((top_pos, line))
                 else:
-                    lines_with_top.append((0, line))  # fallback
+                    lines_with_top.append((0, line))
             lines_with_top.sort(key=lambda x: x[0])
             sorted_lines = [line for _, line in lines_with_top]
         else:
             sorted_lines = lines
 
-        for line in sorted_lines:
+        for i, line in enumerate(sorted_lines):
             line_text = line.get("text", "")
             items = line.get("items", [])
 
@@ -153,9 +157,37 @@ def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bo
                 bidi = OxmlElement("w:bidi")
                 pPr.append(bidi)
 
-            paragraph.paragraph_format.space_before = Pt(0)
-            paragraph.paragraph_format.space_after = Pt(1)
-            paragraph.paragraph_format.line_spacing = 1.1
+            # Calculate line dimensions (similar to PDF box calculations)
+            if items:
+                line_heights = []
+                for item in items:
+                    if item.get("bbox"):
+                        height = item["bbox"][3]
+                        line_heights.append(height)
+                
+                if line_heights:
+                    avg_line_height = sum(line_heights) / len(line_heights)
+                    # Apply similar padding concept as PDF (padding_y = box_height * 0.1)
+                    vertical_padding = avg_line_height * 0.1 * 0.75  # Convert to points
+                    
+                    # Set spacing based on line height (similar to PDF approach)
+                    space_before = max(0, vertical_padding * 0.5)
+                    space_after = max(2, vertical_padding * 0.8)
+                    
+                    # Line spacing based on text height
+                    line_spacing = 1.0 + (avg_line_height * 0.001)  # Subtle adjustment
+                else:
+                    space_before = 0
+                    space_after = 2
+                    line_spacing = 1.1
+            else:
+                space_before = 0
+                space_after = 2
+                line_spacing = 1.1
+
+            paragraph.paragraph_format.space_before = Pt(space_before)
+            paragraph.paragraph_format.space_after = Pt(space_after)
+            paragraph.paragraph_format.line_spacing = line_spacing
 
             if items:
                 for idx, item in enumerate(items):
@@ -164,18 +196,18 @@ def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bo
                         continue
 
                     run = paragraph.add_run(item_text)
-                    run.font.size = Pt(avg_font_size)
+                    run.font.size = Pt(scaled_font_size)
                     run.font.bold = False
                     run.font.italic = False
                     run.font.underline = False
 
                     if idx < len(items) - 1:
                         space = paragraph.add_run(" ")
-                        space.font.size = Pt(avg_font_size)
+                        space.font.size = Pt(scaled_font_size)
                         space.font.bold = False
             else:
                 run = paragraph.add_run(line_text)
-                run.font.size = Pt(avg_font_size)
+                run.font.size = Pt(scaled_font_size)
                 run.font.bold = False
                 run.font.italic = False
                 run.font.underline = False
@@ -186,3 +218,11 @@ def export_ocr_to_word(export_data: Dict, output_docx_path: str, rtl_support: bo
     except Exception as e:
         print("Error exporting OCR result to Word:")
         print(f"Exception: {e}")
+
+
+
+
+
+
+
+        # development stage ---------------------------------------------
