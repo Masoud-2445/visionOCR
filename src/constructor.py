@@ -244,11 +244,11 @@ def docx_constructor(layout_data, image_target, output_path):
         for element in elements:
             element_type = element.get("type")
 
-            if element_type in ["header", "paragraph", "footer"]:
+            if element_type in ["header", "paragraph", "footer", "text"]:
                 text_constructor(doc, element)
             elif element_type == "table":
                 table_constructor(doc, element, usable_page_width)
-            elif element_type in ["stamp", "signature", "person_headshot", "signed_headshot", "signed_stamp"]:
+            elif element_type in ["stamp", "signature", "person_headshot", "signed_headshot", "signed_stamp", "visual_element"]:
                 visual_constructor(doc, element, image_target, usable_page_width, usable_page_height)
 
         doc.save(output_path)

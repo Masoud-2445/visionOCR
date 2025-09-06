@@ -11,6 +11,7 @@ import json
 from constructor import docx_constructor
 import os
 import uuid
+from layout_process import post_process_layout
 
 
 
@@ -77,7 +78,7 @@ def resize_before(pil_image, target_height = 1920):
 
 def image_scale(image: Image.Image, json_path: str):
     try:
-        with open(json_path, 'r') as f:
+        with open(json_path, 'r', encoding='utf-8') as f:
             layout_data = json.load(f)
 
         # Scale up the layout coordinates
@@ -195,8 +196,6 @@ def doc_construct():
 
 if __name__ == "__main__" :
 
-    
-
 
     img = upload_image()
 
@@ -209,6 +208,11 @@ if __name__ == "__main__" :
 
     output_file = "C:/Users/masoo/Documents/OCR-project/layout_results.json"
     ld.save_results_to_json(layout, output_file)
+
+
+
+# Post-process
+    layout_data = post_process_layout(output_file)
 
     resize_construct_image = image_scale(image, output_file)
     temp_image = save_pillow(resize_construct_image, "C:/Users/masoo/Documents/OCR-project/temp_images")
